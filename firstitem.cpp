@@ -34,7 +34,7 @@ typedef struct record {
 
 //工具函数
 int timecheck(Record* rec) {
-    if(rec->borrowDate > rec->borrowDate + 60) {
+    if (time(NULL) - rec->borrowDate > 60) {
         return 1;
     }
     return 0;
@@ -78,6 +78,7 @@ Book* getBook(Book* head, char* isbn) {
         if (strcmp(p->isbn, isbn) == 0) {
             return p;
         }
+        p = p->next;
     }
     return NULL;
 }
@@ -173,10 +174,10 @@ void deleteBook(Book** head) {
 void modifyBook(Book* head) {
     printf("isbn:");
     char isbn[20];
-    scanf_s("%s", &isbn,(unsigned)sizeof(isbn));
+    scanf_s("%s", isbn,(unsigned)sizeof(isbn));
     Book* p = head;
     while (p) {
-        if (strcmp(p->isbn, isbn) != 0) {
+        if (strcmp(p->isbn, isbn) == 0) {
             printf("modifing");
             printf("请输入书名：\n");
             scanf_s("%s", p->title, (unsigned)sizeof(p->title));
@@ -188,14 +189,13 @@ void modifyBook(Book* head) {
             scanf_s("%d", &p->total);
             if (p->total < 1) {
                 printf("error number of total must higher than 1\n");
-                free(p);
                 return;
             }
             if (p->total < p->borrowed) {
                 printf("error number of total must higher than borrowed\n");
-                free(p);
                 return;
             }
+            return;
         }
         p = p->next;
     }
@@ -312,7 +312,7 @@ void borrowBook(Book* bHead, Reader* rHead, Record** recHead) {
         return;
     }
     //判断读者借了5本
-    if (reader->borrowedCount > 5) {
+    if (reader->borrowedCount >= 5) {
         printf("can't more than 5");
         return;
     }
@@ -324,14 +324,16 @@ void borrowBook(Book* bHead, Reader* rHead, Record** recHead) {
     reader->borrowedCount++;
     book->borrowCount++;
     book->borrowed++;
-    Record* rec = (Record*)malloc((sizeof(rec)));
-    rec->borrowDate = localtime(NULL)->tm_year + 1900;
-    printf("borrowdate:year:%d,month:%d,day:%d\n", rec->borrowDate.tm_year, rec->borrowDate.tm_mon + 1, rec->borrowDate.tm_mday);
+    Record* rec = (Record*)malloc(sizeof(Record));
+    rec->borrowDate = time(NULL);
+    struct tm localTime;
+    localtime_s(&localTime, &rec->borrowDate);
+    printf("borrowdate:year:%d,month:%d,day:%d\n", localTime.tm_year + 1900, localTime.tm_mon + 1, localTime.tm_mday);
     strcpy_s(rec->isbn, isbn); 
     strcpy_s(rec->readerId, readerId);
     rec->returned = 0;
+    rec->next = *recHead;
     *recHead = rec;
-    rec = rec->next;
 }
 void returnBook(Book* bHead, Reader* rHead, Record** recHead) {
     char readerId[20];
@@ -352,41 +354,41 @@ void returnBook(Book* bHead, Reader* rHead, Record** recHead) {
         printf("无此书");
         return;
     }
-    reader->borrowedCount--;
-    book->borrowed--;
-
-    Record* rec = (Record*)malloc((sizeof(rec)));
-    strcpy_s(rec->isbn, isbn);
-    strcpy_s(rec->readerId, readerId);
-    rec->returned = 0;
-    *recHead = rec;
-    rec = rec->next;
+    Record* rec = *recHead;
+    while (rec) {
+        if (strcmp(rec->readerId, readerId) == 0 && strcmp(rec->isbn, isbn) == 0 && rec->returned == 0) {
+            rec->returned = 1;
+            reader->borrowedCount--;
+            book->borrowed--;
+            printf("还书成功\n");
+            return;
+        }
+        rec = rec->next;
+    }
+    printf("没有找到未归还的借阅记录\n");
 }
 void viewRecords(Record* recHead, Reader* rHead, Book* bHead) {
-    if (!bHead) {
-        printf("不能为空");
+    if (!recHead) {
+        printf("暂无借阅记录\n");
         return;
     }
-    Book* p = bHead;
-    Reader* p1 = rHead;
-    Record* p2 = recHead;
-    while (p2) {
-        if (strcmp(p2->readerId, p1->id)==0) {
-            printf("id:%s\n", p1->id);
-            printf("borrowed count:%d\n", p1->borrowedCount);//为什么这里不用取地址
-            printf("borrowdate:year:%d,month:%d,day:%d\n", p2->borrowDate.tm_year, p2->borrowDate.tm_mon + 1, p2->borrowDate.tm_mday);
-        }
-        p2 = p2->next;
-        if(p2->next == NULL){
-            printf("no more\n");
-            break;
-        }
-        if(p1->next == NULL){
-            printf("no more\n");
-            break;
-        }
-        p1 = p1->next;
+    Record* record = recHead;
+    while (record) {
+        Reader* reader = getReader(rHead, record->readerId);
+        Book* book = getBook(bHead, record->isbn);
+        struct tm localTime;
+        localtime_s(&localTime, &record->borrowDate);
+        printf("--------------------\n");
+        printf("读者ID:%s\n", record->readerId);
+        printf("读者姓名:%s\n", reader ? reader->name : "未知读者");
+        printf("ISBN:%s\n", record->isbn);
+        printf("书名:%s\n", book ? book->title : "未知图书");
+        printf("借书日期:%d-%02d-%02d %02d:%02d:%02d\n", localTime.tm_year + 1900,
+            localTime.tm_mon + 1, localTime.tm_mday, localTime.tm_hour, localTime.tm_min, localTime.tm_sec);
+        printf("状态:%s\n", record->returned ? "已归还" : "未归还");
+        record = record->next;
     }
+    printf("--------------------\n");
 }
 void viewOverdue(Record* recHead, Reader* rHead, Book* bHead) {
     if (!recHead) {
@@ -406,14 +408,109 @@ void viewOverdue(Record* recHead, Reader* rHead, Book* bHead) {
         p = p->next;
     }
 }
+void saveBooks(Book* head, const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) {
+        printf("图书文件保存失败\n");
+        return;
+    }
+    while (head) {
+        fprintf(fp, "%s %s %s %s %d %d %d\n", head->isbn, head->title, head->author,
+            head->publisher, head->total, head->borrowed, head->borrowCount);
+        head = head->next;
+    }
+    fclose(fp);
+}
+
+void saveReaders(Reader* head, const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) {
+        printf("读者文件保存失败\n");
+        return;
+    }
+    while (head) {
+        fprintf(fp, "%s %s %s %d\n", head->id, head->name, head->phone, head->borrowedCount);
+        head = head->next;
+    }
+    fclose(fp);
+}
+
+void saveRecords(Record* head, const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) {
+        printf("借阅记录文件保存失败\n");
+        return;
+    }
+    while (head) {
+        fprintf(fp, "%s %s %lld %d\n", head->readerId, head->isbn,
+            (long long)head->borrowDate, head->returned);
+        head = head->next;
+    }
+    fclose(fp);
+}
+
+void saveAll(Book* books, Reader* readers, Record* records) {
+    saveBooks(books, "books.txt");
+    saveReaders(readers, "readers.txt");
+    saveRecords(records, "records.txt");
+}
+
+void loadBooks(Book** head, const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (fp == NULL) {
+        return;
+    }
+    Book* p;
+    while ((p = (Book*)malloc(sizeof(Book))) != NULL &&
+        fscanf(fp, "%19s %99s %49s %49s %d %d %d", p->isbn, p->title, p->author,
+            p->publisher, &p->total, &p->borrowed, &p->borrowCount) == 7) {
+        p->next = *head;
+        *head = p;
+    }
+    free(p);
+    fclose(fp);
+}
+void loadReaders(Reader** head, const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (fp == NULL) {
+        return;
+    }
+    Reader* p;
+    while ((p = (Reader*)malloc(sizeof(Reader))) != NULL &&
+        fscanf(fp, "%19s %49s %14s %d", p->id, p->name, p->phone, &p->borrowedCount) == 4) {
+        p->next = *head;
+        *head = p;
+    }
+    free(p);
+    fclose(fp);
+}
+void loadRecords(Record** head, const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (fp == NULL) {
+        return;
+    }
+    Record* p;
+    long long borrowDate;
+    while ((p = (Record*)malloc(sizeof(Record))) != NULL &&
+        fscanf(fp, "%19s %19s %lld %d", p->readerId, p->isbn, &borrowDate, &p->returned) == 4) {
+        p->borrowDate = (time_t)borrowDate;
+        p->next = *head;
+        *head = p;
+    }
+    free(p);
+    fclose(fp);
+}
 int main() {
     Book* head = NULL;
     Reader* head1 = NULL;
     Record* head2 = NULL;
     int choice;
-    // 2. 注册“退出时自动保存”
+    loadBooks(&head, "books.txt");
+    loadReaders(&head1, "readers.txt");
+    loadRecords(&head2, "records.txt");
 
     while (1) {
+        printf("0.保存并退出\n");
         printf("1.添加图书\n");
         printf("2.显示所有图书\n");
         printf("3.测试isbn是否可用\n");
@@ -431,13 +528,17 @@ int main() {
         printf("15.还书\n");
         scanf_s("%d", &choice);
         switch (choice) {
+        case 0:
+            saveAll(head, head1, head2);
+            printf("数据已保存\n");
+            return 0;
         case 1:
             addBook(&head);
             break;
         case 2:
             displayBooks(head);
             break;
-        case 3:
+        case 3: {
             char isbn[20];
             printf("isbn:\n");
             scanf_s("%s", isbn, (unsigned)sizeof(isbn));
@@ -448,6 +549,7 @@ int main() {
                 printf("正确\n");
             }
             break;
+        }
         case 4:
             printf("isbn:\n");
             searchBook(head);
@@ -486,7 +588,10 @@ int main() {
         case 15:
             returnBook(head,head1,&head2);
             break;
+        default:
+            printf("无效选项\n");
+            break;
         }
+        saveAll(head, head1, head2);
     }
-    return 0;
 }
